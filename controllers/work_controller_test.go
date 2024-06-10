@@ -51,7 +51,6 @@ var _ = Describe("WorkReconciler", func() {
 		fakeScheduler = &controllersfakes.FakeWorkScheduler{}
 		reconciler = &controllers.WorkReconciler{
 			Client:    fakeK8sClient,
-			Log:       ctrl.Log.WithName("controllers").WithName("Work"),
 			Scheduler: fakeScheduler,
 			Disabled:  disabled,
 		}

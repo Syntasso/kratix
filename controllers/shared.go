@@ -21,7 +21,6 @@ import (
 )
 
 const (
-	promiseVersionLabel            = v1alpha1.KratixPrefix + "promise-version"
 	promiseReleaseNameLabel        = v1alpha1.KratixPrefix + "promise-release-name"
 	removeAllWorkflowJobsFinalizer = v1alpha1.KratixPrefix + "workflows-cleanup"
 	runDeleteWorkflowsFinalizer    = v1alpha1.KratixPrefix + "delete-workflows"
@@ -43,7 +42,6 @@ type StateStore interface {
 type opts struct {
 	ctx    context.Context
 	client client.Client
-	logger logr.Logger
 }
 
 // pass in nil resourceLabels to delete all resources of the GVK
@@ -55,17 +53,17 @@ func deleteAllResourcesWithKindMatchingLabel(o opts, gvk schema.GroupVersionKind
 	if err != nil {
 		return true, err
 	}
-
-	o.logger.Info("deleting resources", "gvk", resourceList.GroupVersionKind(), "withLabels", resourceLabels, "resources", resourceutil.GetResourceNames(resourceList.Items))
+	logger := ctrl.LoggerFrom(o.ctx)
+	logger.Info("deleting resources", "gvk", resourceList.GroupVersionKind(), "withLabels", resourceLabels, "resources", resourceutil.GetResourceNames(resourceList.Items))
 
 	for _, resource := range resourceList.Items {
 		err = o.client.Delete(o.ctx, &resource, client.PropagationPolicy(metav1.DeletePropagationBackground))
-		o.logger.Info("deleting resource", "res", resource.GetName(), "gvk", resource.GroupVersionKind())
+		logger.Info("deleting resource", "res", resource.GetName(), "gvk", resource.GroupVersionKind())
 		if err != nil && !errors.IsNotFound(err) {
-			o.logger.Error(err, "Error deleting resource, will try again in 5 seconds", "name", resource.GetName(), "kind", resource.GetKind())
+			logger.Error(err, "Error deleting resource, will try again in 5 seconds", "name", resource.GetName(), "kind", resource.GetKind())
 			return true, err
 		}
-		o.logger.Info("successfully triggered deletion of resource", "name", resource.GetName(), "kind", resource.GetKind())
+		logger.Info("successfully triggered deletion of resource", "name", resource.GetName(), "kind", resource.GetKind())
 	}
 
 	return len(resourceList.Items) != 0, nil
@@ -73,7 +71,7 @@ func deleteAllResourcesWithKindMatchingLabel(o opts, gvk schema.GroupVersionKind
 
 // finalizers must be less than 64 characters
 func addFinalizers(o opts, resource client.Object, finalizers []string) (ctrl.Result, error) {
-	o.logger.Info("Adding missing finalizers",
+	ctrl.LoggerFrom(o.ctx).Info("Adding missing finalizers",
 		"expectedFinalizers", finalizers,
 		"existingFinalizers", resource.GetFinalizers(),
 	)
@@ -87,8 +85,9 @@ func addFinalizers(o opts, resource client.Object, finalizers []string) (ctrl.Re
 }
 
 func fetchObjectAndSecret(o opts, stateStoreRef client.ObjectKey, stateStore StateStore) (*v1.Secret, error) {
+	logger := ctrl.LoggerFrom(o.ctx)
 	if err := o.client.Get(o.ctx, stateStoreRef, stateStore); err != nil {
-		o.logger.Error(err, "unable to fetch resource", "resourceKind", stateStore.GetObjectKind(), "stateStoreRef", stateStoreRef)
+		logger.Error(err, "unable to fetch resource", "resourceKind", stateStore.GetObjectKind(), "stateStoreRef", stateStoreRef)
 		return nil, err
 	}
 
@@ -108,7 +107,7 @@ func fetchObjectAndSecret(o opts, stateStoreRef client.ObjectKey, stateStore Sta
 	}
 
 	if err := o.client.Get(o.ctx, secretRef, secret); err != nil {
-		o.logger.Error(err, "unable to fetch resource", "resourceKind", stateStore.GetObjectKind(), "secretRef", secretRef)
+		logger.Error(err, "unable to fetch resource", "resourceKind", stateStore.GetObjectKind(), "secretRef", secretRef)
 		return nil, err
 	}
 
@@ -123,6 +122,8 @@ func newWriter(o opts, destination v1alpha1.Destination) (writers.StateStoreWrit
 
 	var writer writers.StateStoreWriter
 	var err error
+	logger := ctrl.LoggerFrom(o.ctx)
+
 	switch destination.Spec.StateStoreRef.Kind {
 	case "BucketStateStore":
 		stateStore := &v1alpha1.BucketStateStore{}
@@ -135,7 +136,7 @@ func newWriter(o opts, destination v1alpha1.Destination) (writers.StateStoreWrit
 			data = secret.Data
 		}
 
-		writer, err = newS3Writer(o.logger.WithName("writers").WithName("BucketStateStoreWriter"), stateStore.Spec, destination, data)
+		writer, err = newS3Writer(logger.WithName("writers").WithName("BucketStateStoreWriter"), stateStore.Spec, destination, data)
 	case "GitStateStore":
 		stateStore := &v1alpha1.GitStateStore{}
 		secret, fetchErr := fetchObjectAndSecret(o, stateStoreRef, stateStore)
@@ -143,13 +144,13 @@ func newWriter(o opts, destination v1alpha1.Destination) (writers.StateStoreWrit
 			return nil, fetchErr
 		}
 
-		writer, err = newGitWriter(o.logger.WithName("writers").WithName("GitStateStoreWriter"), stateStore.Spec, destination, secret.Data)
+		writer, err = newGitWriter(logger.WithName("writers").WithName("GitStateStoreWriter"), stateStore.Spec, destination, secret.Data)
 	default:
 		return nil, fmt.Errorf("unsupported kind %s", destination.Spec.StateStoreRef.Kind)
 	}
 
 	if err != nil {
-		o.logger.Error(err, "unable to create StateStoreWriter")
+		logger.Error(err, "unable to create StateStoreWriter")
 		return nil, err
 	}
 	return writer, nil

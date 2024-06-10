@@ -27,7 +27,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 
-	"github.com/go-logr/logr"
 	"github.com/syntasso/kratix/api/v1alpha1"
 	"github.com/syntasso/kratix/lib/writers"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -39,7 +38,6 @@ const canaryWorkload = "kratix-canary"
 // DestinationReconciler reconciles a Destination object
 type DestinationReconciler struct {
 	Client    client.Client
-	Log       logr.Logger
 	Scheduler *Scheduler
 }
 
@@ -54,9 +52,7 @@ type DestinationReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.11.0/pkg/reconcile
 func (r *DestinationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := r.Log.WithValues(
-		"destination", req.NamespacedName,
-	)
+	logger := ctrl.LoggerFrom(ctx)
 
 	destination := &v1alpha1.Destination{}
 	logger.Info("Registering Destination", "requestName", req.Name)
@@ -70,7 +66,6 @@ func (r *DestinationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	opts := opts{
 		client: r.Client,
 		ctx:    ctx,
-		logger: logger,
 	}
 
 	writer, err := newWriter(opts, *destination)

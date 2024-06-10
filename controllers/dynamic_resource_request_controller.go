@@ -25,7 +25,6 @@ import (
 
 	"fmt"
 
-	"github.com/go-logr/logr"
 	"github.com/syntasso/kratix/api/v1alpha1"
 	"github.com/syntasso/kratix/lib/pipeline"
 	"github.com/syntasso/kratix/lib/resourceutil"
@@ -59,7 +58,6 @@ type DynamicResourceRequestController struct {
 	PromiseIdentifier           string
 	ConfigurePipelines          []v1alpha1.Pipeline
 	DeletePipelines             []v1alpha1.Pipeline
-	Log                         logr.Logger
 	UID                         string
 	Enabled                     *bool
 	CRD                         *apiextensionsv1.CustomResourceDefinition
@@ -78,9 +76,10 @@ func (r *DynamicResourceRequestController) Reconcile(ctx context.Context, req ct
 	}
 
 	resourceRequestIdentifier := fmt.Sprintf("%s-%s", r.PromiseIdentifier, req.Name)
-	logger := r.Log.WithValues(
+
+	logger := ctrl.LoggerFrom(ctx).WithValues(
 		"uid", r.UID,
-		"promiseID", r.PromiseIdentifier,
+		"promiseName", r.PromiseIdentifier,
 		"namespace", req.NamespacedName,
 		"resourceRequest", resourceRequestIdentifier,
 	)
@@ -124,7 +123,6 @@ func (r *DynamicResourceRequestController) Reconcile(ctx context.Context, req ct
 	opts := opts{
 		client: r.Client,
 		ctx:    ctx,
-		logger: logger,
 	}
 
 	if !rr.GetDeletionTimestamp().IsZero() {
@@ -162,7 +160,7 @@ func (r *DynamicResourceRequestController) Reconcile(ctx context.Context, req ct
 			resourceRequestIdentifier,
 			r.PromiseIdentifier,
 			r.PromiseDestinationSelectors,
-			opts.logger,
+			logger,
 		)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -221,7 +219,7 @@ func (r *DynamicResourceRequestController) deleteResources(o opts, resourceReque
 			})
 		}
 
-		jobOpts := workflow.NewOpts(o.ctx, o.client, o.logger, resourceRequest, pipelines, "resource")
+		jobOpts := workflow.NewOpts(o.ctx, o.client, ctrl.LoggerFrom(o.ctx), resourceRequest, pipelines, "resource")
 		requeue, err := reconcileDelete(jobOpts)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -277,7 +275,7 @@ func (r *DynamicResourceRequestController) deleteWork(o opts, resourceRequest *u
 			if !errors.IsNotFound(err) {
 				return err
 			}
-			o.logger.Error(err, "Error deleting Work %s, will try again", "workName", workName)
+			ctrl.LoggerFrom(o.ctx).Error(err, "Error deleting Work %s, will try again", "workName", workName)
 			return err
 		}
 	}

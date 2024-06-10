@@ -60,7 +60,6 @@ var _ = Describe("WorkplacementReconciler", func() {
 		ctx = context.Background()
 		reconciler = &controllers.WorkPlacementReconciler{
 			Client:       fakeK8sClient,
-			Log:          ctrl.Log.WithName("controllers").WithName("Work"),
 			VersionCache: make(map[string]string),
 		}
 

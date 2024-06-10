@@ -50,11 +50,9 @@ var _ = Describe("PromiseController", func() {
 		expectedCRDName = promiseResourceName + "." + promiseGroup
 		ctx = context.Background()
 		managerRestarted = false
-		l = ctrl.Log.WithName("controllers").WithName("Promise")
 		reconciler = &controllers.PromiseReconciler{
 			Client:              fakeK8sClient,
 			ApiextensionsClient: fakeApiExtensionsClient,
-			Log:                 l,
 			Manager:             &controllersfakes.FakeManager{},
 			RestartManager: func() {
 				managerRestarted = true

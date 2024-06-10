@@ -38,7 +38,6 @@ var _ = Describe("PromiseReleaseController", func() {
 			Client:         fakeK8sClient,
 			Scheme:         scheme.Scheme,
 			PromiseFetcher: fakeFetcher,
-			Log:            ctrl.Log.WithName("controllers").WithName("PromiseRelease"),
 		}
 
 		promiseRelease = v1alpha1.PromiseRelease{
@@ -299,7 +298,6 @@ var _ = Describe("PromiseReleaseController", func() {
 							Client:         fakeK8sClient,
 							Scheme:         scheme.Scheme,
 							PromiseFetcher: fakeFetcher,
-							Log:            ctrl.Log.WithName("controllers").WithName("PromiseRelease"),
 							EventRecorder:  eventRecorder,
 						}
 
@@ -484,7 +482,6 @@ var _ = Describe("PromiseReleaseController", func() {
 				Client:         fakeK8sClient,
 				Scheme:         scheme.Scheme,
 				PromiseFetcher: fakeFetcher,
-				Log:            ctrl.Log.WithName("controllers").WithName("PromiseRelease"),
 				EventRecorder:  eventRecorder,
 			}
 		})

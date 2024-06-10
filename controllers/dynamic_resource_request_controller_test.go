@@ -85,10 +85,8 @@ var _ = Describe("DynamicResourceRequestController", func() {
 			},
 
 			PromiseDestinationSelectors: promise.Spec.DestinationSelectors,
-			// promiseWorkflowSelectors:    work.GetDefaultScheduling("promise-workflow"),
-			Log:     l,
-			UID:     "1234abcd",
-			Enabled: &enabled,
+			UID:                         "1234abcd",
+			Enabled:                     &enabled,
 		}
 
 		yamlFile, err := os.ReadFile(resourceRequestPath)

@@ -46,9 +46,7 @@ type StateFile struct {
 
 // WorkPlacementReconciler reconciles a WorkPlacement object
 type WorkPlacementReconciler struct {
-	Client client.Client
-	Log    logr.Logger
-
+	Client       client.Client
 	VersionCache map[string]string
 }
 
@@ -65,7 +63,7 @@ var workPlacementFinalizers = []string{repoCleanupWorkPlacementFinalizer}
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.11.0/pkg/reconcile
 func (r *WorkPlacementReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := r.Log.WithValues("work-placement-controller", req.NamespacedName)
+	logger := ctrl.LoggerFrom(ctx)
 
 	workPlacement := &v1alpha1.WorkPlacement{}
 	err := r.Client.Get(context.Background(), req.NamespacedName, workPlacement)
@@ -90,7 +88,6 @@ func (r *WorkPlacementReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	opts := opts{
 		client: r.Client,
 		ctx:    ctx,
-		logger: logger,
 	}
 
 	//Mock this out
@@ -103,7 +100,7 @@ func (r *WorkPlacementReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if !workPlacement.DeletionTimestamp.IsZero() {
-		return r.deleteWorkPlacement(ctx, writer, workPlacement, destination.GetFilepathMode(), logger)
+		return r.deleteWorkPlacement(ctx, writer, workPlacement, destination.GetFilepathMode())
 	}
 
 	if resourceutil.FinalizersAreMissing(workPlacement, workPlacementFinalizers) {
@@ -135,14 +132,14 @@ func (r *WorkPlacementReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return ctrl.Result{}, nil
 }
 
-func (r *WorkPlacementReconciler) deleteWorkPlacement(ctx context.Context, writer writers.StateStoreWriter, workPlacement *v1alpha1.WorkPlacement, filePathMode string, logger logr.Logger) (ctrl.Result, error) {
+func (r *WorkPlacementReconciler) deleteWorkPlacement(ctx context.Context, writer writers.StateStoreWriter, workPlacement *v1alpha1.WorkPlacement, filePathMode string) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(workPlacement, repoCleanupWorkPlacementFinalizer) {
 		return ctrl.Result{}, nil
 	}
-	logger.Info("cleaning up work on repository", "workplacement", workPlacement.Name)
+	logger := ctrl.LoggerFrom(ctx)
 
+	logger.Info("cleaning up work on repository")
 	var err error
-
 	var dir = getDir(*workPlacement) + "/"
 	var workloadsToDelete []string
 

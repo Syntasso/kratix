@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/syntasso/kratix/api/v1alpha1"
+	"github.com/syntasso/kratix/lib/resourceutil"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,11 +32,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/log"
-
-	"github.com/go-logr/logr"
-	"github.com/syntasso/kratix/api/v1alpha1"
-	"github.com/syntasso/kratix/lib/resourceutil"
 )
 
 const (
@@ -49,7 +46,6 @@ const (
 type PromiseReleaseReconciler struct {
 	client.Client
 	Scheme         *runtime.Scheme
-	Log            logr.Logger
 	PromiseFetcher v1alpha1.PromiseFetcher
 	EventRecorder  record.EventRecorder
 }
@@ -62,7 +58,7 @@ const promiseCleanupFinalizer = v1alpha1.KratixPrefix + "promise-cleanup"
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 func (r *PromiseReleaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	logger := ctrl.LoggerFrom(ctx)
 
 	promiseRelease := &v1alpha1.PromiseRelease{}
 	err := r.Get(ctx, req.NamespacedName, promiseRelease)
@@ -70,35 +66,33 @@ func (r *PromiseReleaseReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
-		r.Log.Error(err, "Failed getting PromiseRelease", "namespacedName", req.NamespacedName)
+		logger.Error(err, "Failed getting PromiseRelease")
 		return defaultRequeue, nil
 	}
 
-	logger := r.Log.WithValues("identifier", promiseRelease.GetName())
 	logger.Info("Reconciling PromiseRelease")
 
 	opts := opts{
 		client: r.Client,
 		ctx:    ctx,
-		logger: logger,
 	}
 
 	if !promiseRelease.DeletionTimestamp.IsZero() {
-		return r.delete(opts, promiseRelease)
+		return r.delete(ctx, promiseRelease)
 	}
 
 	if resourceutil.DoesNotContainFinalizer(promiseRelease, promiseCleanupFinalizer) {
 		return addFinalizers(opts, promiseRelease, []string{promiseCleanupFinalizer})
 	}
 
-	exists, err := r.promiseExistsAtDesiredVersion(opts, promiseRelease)
+	exists, err := r.promiseExistsAtDesiredVersion(ctx, promiseRelease)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to check if promise exists: %w", err)
 	}
 
 	if exists {
 		logger.Info("Promise exists, skipping install")
-		r.updateStatusAndConditions(opts, promiseRelease, statusInstalled, conditionMessageInstalled, conditionReasonInstalled)
+		r.updateStatusAndConditions(ctx, promiseRelease, statusInstalled, conditionMessageInstalled, conditionReasonInstalled)
 		return ctrl.Result{}, nil
 	}
 
@@ -110,10 +104,10 @@ func (r *PromiseReleaseReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	case v1alpha1.TypeHTTP:
 		promise, err = r.PromiseFetcher.FromURL(promiseRelease.Spec.SourceRef.URL)
 		if err != nil {
-			r.updateStatusAndConditions(opts, promiseRelease, statusErrorInstalling, "Failed to fetch Promise from URL", "FailedToFetchPromise")
+			r.updateStatusAndConditions(ctx, promiseRelease, statusErrorInstalling, "Failed to fetch Promise from URL", "FailedToFetchPromise")
 			return ctrl.Result{}, fmt.Errorf("failed to fetch promise from url: %w", err)
 		}
-		updated, err := r.validateVersion(opts, promiseRelease, promise)
+		updated, err := r.validateVersion(ctx, promiseRelease, promise)
 		if err != nil || updated {
 			return ctrl.Result{}, err
 		}
@@ -123,12 +117,12 @@ func (r *PromiseReleaseReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	if err := r.installPromise(opts, promiseRelease, promise); err != nil {
-		r.updateStatusAndConditions(opts, promiseRelease, statusErrorInstalling, "Failed to create or update Promise", "FailedToCreateOrUpdatePromise")
+		r.updateStatusAndConditions(ctx, promiseRelease, statusErrorInstalling, "Failed to create or update Promise", "FailedToCreateOrUpdatePromise")
 		return ctrl.Result{}, fmt.Errorf("failed to create or update promise: %w", err)
 	}
 
 	promiseRelease.Status.Status = statusInstalled
-	r.updateStatusAndConditions(opts, promiseRelease, statusInstalled, conditionMessageInstalled, conditionReasonInstalled)
+	r.updateStatusAndConditions(ctx, promiseRelease, statusInstalled, conditionMessageInstalled, conditionReasonInstalled)
 	return ctrl.Result{}, nil
 }
 
@@ -177,22 +171,22 @@ func (r *PromiseReleaseReconciler) installPromise(o opts, promiseRelease *v1alph
 		return err
 	}
 
-	o.logger.Info("Promise reconciled during PromiseRelease reconciliation",
+	ctrl.LoggerFrom(o.ctx).Info("Promise reconciled during PromiseRelease reconciliation",
 		"operation", op,
 		"promiseName", promise.GetName(),
-		"promiseReleaseName", promiseRelease.GetName(),
 	)
 
 	return nil
 }
 
-func (r *PromiseReleaseReconciler) delete(o opts, promiseRelease *v1alpha1.PromiseRelease) (ctrl.Result, error) {
+func (r *PromiseReleaseReconciler) delete(ctx context.Context, promiseRelease *v1alpha1.PromiseRelease) (ctrl.Result, error) {
+	logger := ctrl.LoggerFrom(ctx)
 	if !controllerutil.ContainsFinalizer(promiseRelease, promiseCleanupFinalizer) {
 		return ctrl.Result{}, nil
 	}
 
 	promises := &v1alpha1.PromiseList{}
-	err := o.client.List(o.ctx, promises, client.MatchingLabels{
+	err := r.Client.List(ctx, promises, client.MatchingLabels{
 		promiseReleaseNameLabel: promiseRelease.GetName(),
 	})
 	if err != nil {
@@ -201,7 +195,7 @@ func (r *PromiseReleaseReconciler) delete(o opts, promiseRelease *v1alpha1.Promi
 
 	if len(promises.Items) == 0 {
 		controllerutil.RemoveFinalizer(promiseRelease, promiseCleanupFinalizer)
-		err = o.client.Update(o.ctx, promiseRelease)
+		err = r.Client.Update(ctx, promiseRelease)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to remove finalizer: %w", err)
 		}
@@ -209,9 +203,9 @@ func (r *PromiseReleaseReconciler) delete(o opts, promiseRelease *v1alpha1.Promi
 	}
 
 	for _, promise := range promises.Items {
-		r.Log.Info("Deleting Promise", "promiseName", promise.GetName())
+		logger.Info("Deleting Promise", "promiseName", promise.GetName())
 		if promise.GetDeletionTimestamp().IsZero() {
-			err = o.client.Delete(o.ctx, &promise)
+			err = r.Client.Delete(ctx, &promise)
 			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed to delete Promise: %w", err)
 			}
@@ -221,9 +215,9 @@ func (r *PromiseReleaseReconciler) delete(o opts, promiseRelease *v1alpha1.Promi
 	return defaultRequeue, nil
 }
 
-func (r *PromiseReleaseReconciler) promiseExistsAtDesiredVersion(o opts, promiseRelease *v1alpha1.PromiseRelease) (bool, error) {
+func (r *PromiseReleaseReconciler) promiseExistsAtDesiredVersion(ctx context.Context, promiseRelease *v1alpha1.PromiseRelease) (bool, error) {
 	promises := &v1alpha1.PromiseList{}
-	err := o.client.List(o.ctx, promises, client.MatchingLabels{
+	err := r.Client.List(ctx, promises, client.MatchingLabels{
 		promiseReleaseNameLabel: promiseRelease.GetName(),
 	})
 
@@ -241,7 +235,7 @@ func (r *PromiseReleaseReconciler) promiseExistsAtDesiredVersion(o opts, promise
 	}
 }
 
-func (r *PromiseReleaseReconciler) updateStatusAndConditions(o opts, pr *v1alpha1.PromiseRelease,
+func (r *PromiseReleaseReconciler) updateStatusAndConditions(ctx context.Context, pr *v1alpha1.PromiseRelease,
 	status string, conditionMessage, conditionReason string) {
 	pr.Status.Status = status
 	existingCondition := meta.FindStatusCondition(pr.Status.Conditions, "Installed")
@@ -266,22 +260,22 @@ func (r *PromiseReleaseReconciler) updateStatusAndConditions(o opts, pr *v1alpha
 
 	meta.SetStatusCondition(&pr.Status.Conditions, condition)
 
-	err := o.client.Status().Update(o.ctx, pr)
+	err := r.Client.Status().Update(ctx, pr)
 	if err != nil {
-		o.logger.Error(err, "Failed to update PromiseRelease status", "promiseReleaseName", pr.GetName(), "status", status, "condition", condition)
+		ctrl.LoggerFrom(ctx).Error(err, "Failed to update PromiseRelease status", "promiseReleaseName", pr.GetName(), "status", status, "condition", condition)
 	}
 }
 
-func (r *PromiseReleaseReconciler) validateVersion(o opts, promiseRelease *v1alpha1.PromiseRelease, promise *v1alpha1.Promise) (updated bool, err error) {
+func (r *PromiseReleaseReconciler) validateVersion(ctx context.Context, promiseRelease *v1alpha1.PromiseRelease, promise *v1alpha1.Promise) (updated bool, err error) {
 	promiseVersion, found := promise.GetLabels()[v1alpha1.PromiseVersionLabel]
 	if !found {
-		r.updateStatusAndConditions(o, promiseRelease, statusErrorInstalling, "Version label not found on Promise", "VersionLabelNotFound")
+		r.updateStatusAndConditions(ctx, promiseRelease, statusErrorInstalling, "Version label not found on Promise", "VersionLabelNotFound")
 		return false, fmt.Errorf("version label (%s) not found on promise; refusing to install", v1alpha1.PromiseVersionLabel)
 	}
 
 	if promiseRelease.Spec.Version == "" {
 		promiseRelease.Spec.Version = promiseVersion
-		err := o.client.Update(o.ctx, promiseRelease)
+		err := r.Client.Update(ctx, promiseRelease)
 		if err != nil {
 			return false, fmt.Errorf("failed to set promise release version: %w", err)
 		}
@@ -290,7 +284,7 @@ func (r *PromiseReleaseReconciler) validateVersion(o opts, promiseRelease *v1alp
 
 	if promiseVersion != promiseRelease.Spec.Version {
 		msg := fmt.Sprintf("Version labels do not match, found: %s, expected: %s", promiseVersion, promiseRelease.Spec.Version)
-		r.updateStatusAndConditions(o, promiseRelease, statusErrorInstalling, msg, "VersionNotMatching")
+		r.updateStatusAndConditions(ctx, promiseRelease, statusErrorInstalling, msg, "VersionNotMatching")
 		return false, fmt.Errorf(
 			"version label on promise (%s) does not match version on promise release (%s); refusing to install",
 			promiseVersion,

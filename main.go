@@ -95,6 +95,7 @@ func main() {
 		prefix := os.Getenv("KRATIX_LOGGER_PREFIX")
 		if prefix != "" {
 			ctrl.Log = ctrl.Log.WithName(prefix)
+			ctrl
 		}
 
 		scheduler := controllers.Scheduler{
@@ -105,7 +106,6 @@ func main() {
 		if err = (&controllers.PromiseReconciler{
 			ApiextensionsClient: apiextensionsClient.ApiextensionsV1(),
 			Client:              mgr.GetClient(),
-			Log:                 ctrl.Log.WithName("controllers").WithName("Promise"),
 			Manager:             mgr,
 			Scheme:              mgr.GetScheme(),
 			RestartManager: func() {
@@ -118,7 +118,6 @@ func main() {
 		}
 		if err = (&controllers.WorkReconciler{
 			Client:    mgr.GetClient(),
-			Log:       ctrl.Log.WithName("controllers").WithName("Work"),
 			Scheduler: &scheduler,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "Work")
@@ -127,14 +126,12 @@ func main() {
 		if err = (&controllers.DestinationReconciler{
 			Client:    mgr.GetClient(),
 			Scheduler: &scheduler,
-			Log:       ctrl.Log.WithName("controllers").WithName("DestinationController"),
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "Destination")
 			os.Exit(1)
 		}
 		if err = (&controllers.WorkPlacementReconciler{
 			Client:       mgr.GetClient(),
-			Log:          ctrl.Log.WithName("controllers").WithName("WorkPlacementController"),
 			VersionCache: make(map[string]string),
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "WorkPlacement")
@@ -145,7 +142,6 @@ func main() {
 			os.Exit(1)
 		}
 		if err = (&controllers.PromiseReleaseReconciler{
-			Log:            ctrl.Log.WithName("controllers").WithName("PromiseReleaseController"),
 			Client:         mgr.GetClient(),
 			Scheme:         mgr.GetScheme(),
 			PromiseFetcher: &fetchers.URLFetcher{},

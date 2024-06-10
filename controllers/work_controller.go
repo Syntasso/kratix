@@ -19,7 +19,6 @@ package controllers
 import (
 	"context"
 
-	"github.com/go-logr/logr"
 	"github.com/syntasso/kratix/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -29,7 +28,6 @@ import (
 // WorkReconciler reconciles a Work object
 type WorkReconciler struct {
 	Client    client.Client
-	Log       logr.Logger
 	Scheduler WorkScheduler
 	Disabled  bool
 }
@@ -60,7 +58,7 @@ func (r *WorkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		//for all. So we do this to disable it
 		return ctrl.Result{}, nil
 	}
-	logger := r.Log.WithValues("work", req.NamespacedName)
+	logger := ctrl.LoggerFrom(ctx)
 	logger.Info("Reconciling Work")
 
 	work := &v1alpha1.Work{}

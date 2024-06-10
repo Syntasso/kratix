@@ -64,7 +64,6 @@ type PromiseReconciler struct {
 	Scheme                    *runtime.Scheme
 	Client                    client.Client
 	ApiextensionsClient       apiextensionsv1cs.CustomResourceDefinitionsGetter
-	Log                       logr.Logger
 	Manager                   ctrl.Manager
 	StartedDynamicControllers map[string]*DynamicResourceRequestController
 	RestartManager            func()
@@ -113,6 +112,7 @@ var (
 //+kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;create;update;patch;delete
 
 func (r *PromiseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	logger := ctrl.LoggerFrom(ctx)
 	if r.StartedDynamicControllers == nil {
 		r.StartedDynamicControllers = make(map[string]*DynamicResourceRequestController)
 	}
@@ -123,18 +123,15 @@ func (r *PromiseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 	if client.IgnoreNotFound(err) != nil {
-		r.Log.Error(err, "Failed getting Promise", "namespacedName", req.NamespacedName)
+		logger.Error(err, "Failed getting Promise", "namespacedName", req.NamespacedName)
 		return defaultRequeue, nil
 	}
 
 	originalStatus := promise.Status.Status
 
-	logger := r.Log.WithValues("identifier", promise.GetName())
-
 	opts := opts{
 		client: r.Client,
 		ctx:    ctx,
-		logger: logger,
 	}
 
 	pipelines, err := promise.GeneratePipelines(logger)
@@ -353,10 +350,11 @@ func (r *PromiseReconciler) generateStatusAndMarkRequirements(ctx context.Contex
 }
 
 func (r *PromiseReconciler) reconcileDependencies(o opts, promise *v1alpha1.Promise, configurePipeline []v1alpha1.Pipeline) (*ctrl.Result, error) {
+	logger := ctrl.LoggerFrom(o.ctx)
 	if len(promise.Spec.Dependencies) > 0 {
-		o.logger.Info("Applying static dependencies for Promise", "promise", promise.GetName())
+		logger.Info("Applying static dependencies for Promise", "promise", promise.GetName())
 		if err := r.applyWorkForStaticDependencies(o, promise); err != nil {
-			o.logger.Error(err, "Error creating Works")
+			logger.Error(err, "Error creating Works")
 			return nil, err
 		}
 	}
@@ -378,7 +376,7 @@ func (r *PromiseReconciler) reconcileDependencies(o opts, promise *v1alpha1.Prom
 		return &result, err
 	}
 
-	o.logger.Info("Promise contains workflows.promise.configure, reconciling workflows")
+	logger.Info("Promise contains workflows.promise.configure, reconciling workflows")
 	unstructuredPromise, err := promise.ToUnstructured()
 	if err != nil {
 		return nil, err
@@ -392,7 +390,7 @@ func (r *PromiseReconciler) reconcileDependencies(o opts, promise *v1alpha1.Prom
 			p,
 			promise.GetName(),
 			promise.Spec.DestinationSelectors,
-			o.logger,
+			logger,
 		)
 		if err != nil {
 			return nil, err
@@ -409,7 +407,7 @@ func (r *PromiseReconciler) reconcileDependencies(o opts, promise *v1alpha1.Prom
 		})
 	}
 
-	jobOpts := workflow.NewOpts(o.ctx, o.client, o.logger, unstructuredPromise, pipelines, "promise")
+	jobOpts := workflow.NewOpts(o.ctx, o.client, logger, unstructuredPromise, pipelines, "promise")
 
 	requeue, err := reconcileConfigure(jobOpts)
 	if err != nil {
@@ -478,7 +476,6 @@ func (r *PromiseReconciler) ensureDynamicControllerIsStarted(promise *v1alpha1.P
 		ConfigurePipelines:          configurePipelines,
 		DeletePipelines:             deletePipelines,
 		PromiseDestinationSelectors: promise.Spec.DestinationSelectors,
-		Log:                         r.Log.WithName(promise.GetName()),
 		UID:                         string(promise.GetUID())[0:5],
 		Enabled:                     &enabled,
 		CanCreateResources:          canCreateResources,
@@ -646,7 +643,8 @@ func (r *PromiseReconciler) updateStatus(promise *v1alpha1.Promise, kind, group,
 }
 
 func (r *PromiseReconciler) deletePromise(o opts, promise *v1alpha1.Promise, deletePipelines []v1alpha1.Pipeline) (ctrl.Result, error) {
-	o.logger.Info("finalizers existing", "finalizers", promise.GetFinalizers())
+	logger := ctrl.LoggerFrom(o.ctx)
+	logger.Info("finalizers existing", "finalizers", promise.GetFinalizers())
 	if resourceutil.FinalizersAreDeleted(promise, promiseFinalizers) {
 		return ctrl.Result{}, nil
 	}
@@ -669,7 +667,7 @@ func (r *PromiseReconciler) deletePromise(o opts, promise *v1alpha1.Promise, del
 			})
 		}
 
-		jobOpts := workflow.NewOpts(o.ctx, o.client, o.logger, unstructuredPromise, pipelines, "promise")
+		jobOpts := workflow.NewOpts(o.ctx, o.client, logger, unstructuredPromise, pipelines, "promise")
 
 		requeue, err := reconcileDelete(jobOpts)
 		if err != nil {
@@ -696,7 +694,7 @@ func (r *PromiseReconciler) deletePromise(o opts, promise *v1alpha1.Promise, del
 	}
 
 	if controllerutil.ContainsFinalizer(promise, resourceRequestCleanupFinalizer) {
-		o.logger.Info("deleting resources associated with finalizer", "finalizer", resourceRequestCleanupFinalizer)
+		logger.Info("deleting resources associated with finalizer", "finalizer", resourceRequestCleanupFinalizer)
 		err := r.deleteResourceRequests(o, promise)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -713,7 +711,7 @@ func (r *PromiseReconciler) deletePromise(o opts, promise *v1alpha1.Promise, del
 	}
 
 	if controllerutil.ContainsFinalizer(promise, dynamicControllerDependantResourcesCleanupFinalizer) {
-		o.logger.Info("deleting resources associated with finalizer", "finalizer", dynamicControllerDependantResourcesCleanupFinalizer)
+		logger.Info("deleting resources associated with finalizer", "finalizer", dynamicControllerDependantResourcesCleanupFinalizer)
 		err := r.deleteDynamicControllerAndWorkflowResources(o, promise)
 		if err != nil {
 			return defaultRequeue, nil
@@ -722,7 +720,7 @@ func (r *PromiseReconciler) deletePromise(o opts, promise *v1alpha1.Promise, del
 	}
 
 	if controllerutil.ContainsFinalizer(promise, dependenciesCleanupFinalizer) {
-		o.logger.Info("deleting Work associated with finalizer", "finalizer", dependenciesCleanupFinalizer)
+		logger.Info("deleting Work associated with finalizer", "finalizer", dependenciesCleanupFinalizer)
 		err := r.deleteWork(o, promise)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -731,7 +729,7 @@ func (r *PromiseReconciler) deletePromise(o opts, promise *v1alpha1.Promise, del
 	}
 
 	if controllerutil.ContainsFinalizer(promise, crdCleanupFinalizer) {
-		o.logger.Info("deleting CRDs associated with finalizer", "finalizer", crdCleanupFinalizer)
+		logger.Info("deleting CRDs associated with finalizer", "finalizer", crdCleanupFinalizer)
 		err := r.deleteCRDs(o, promise)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -795,7 +793,8 @@ func (r *PromiseReconciler) deleteDynamicControllerAndWorkflowResources(o opts, 
 }
 
 func (r *PromiseReconciler) deleteResourceRequests(o opts, promise *v1alpha1.Promise) error {
-	rrCRD, rrGVK, err := generateCRDAndGVK(promise, o.logger)
+	logger := ctrl.LoggerFrom(o.ctx)
+	rrCRD, rrGVK, err := generateCRDAndGVK(promise, logger)
 	if err != nil {
 		return err
 	}
@@ -806,13 +805,13 @@ func (r *PromiseReconciler) deleteResourceRequests(o opts, promise *v1alpha1.Pro
 		return err
 	}
 
-	pipelines, err := promise.GeneratePipelines(o.logger)
+	pipelines, err := promise.GeneratePipelines(logger)
 	if err != nil {
 		return err
 	}
 
 	var canCreateResources bool
-	err = r.ensureDynamicControllerIsStarted(promise, rrCRD, rrGVK, pipelines.ConfigureResource, pipelines.DeleteResource, &canCreateResources, o.logger)
+	err = r.ensureDynamicControllerIsStarted(promise, rrCRD, rrGVK, pipelines.ConfigureResource, pipelines.DeleteResource, &canCreateResources, logger)
 	if err != nil {
 		return err
 	}
@@ -830,7 +829,7 @@ func (r *PromiseReconciler) deleteResourceRequests(o opts, promise *v1alpha1.Pro
 func (r *PromiseReconciler) deleteCRDs(o opts, promise *v1alpha1.Promise) error {
 	rrCRD, err := promise.GetAPIAsCRD()
 	if err != nil {
-		o.logger.Error(err, "Failed unmarshalling CRD, skipping deletion")
+		ctrl.LoggerFrom(o.ctx).Error(err, "Failed unmarshalling CRD, skipping deletion")
 		controllerutil.RemoveFinalizer(promise, crdCleanupFinalizer)
 		if err := r.Client.Update(o.ctx, promise); err != nil {
 			return err
@@ -1025,7 +1024,7 @@ func (r *PromiseReconciler) applyWorkForStaticDependencies(o opts, promise *v1al
 		return err
 	}
 
-	o.logger.Info("resource reconciled", "operation", op, "namespace", work.GetNamespace(), "name", work.GetName(), "gvk", work.GroupVersionKind())
+	ctrl.LoggerFrom(o.ctx).Info("resource reconciled", "operation", op, "namespace", work.GetNamespace(), "name", work.GetName(), "gvk", work.GroupVersionKind())
 	return nil
 }
 
@@ -1039,11 +1038,12 @@ func (r *PromiseReconciler) deleteWorkForStaticDependencies(o opts, promise *v1a
 		return nil
 	}
 
-	o.logger.Info("deleting work for static dependencies", "namespace", existingWork.GetNamespace(), "name", existingWork.GetName())
+	ctrl.LoggerFrom(o.ctx).Info("deleting work for static dependencies", "namespace", existingWork.GetNamespace(), "name", existingWork.GetName())
 	return r.Client.Delete(o.ctx, existingWork)
 }
 
 func (r *PromiseReconciler) markRequiredPromiseAsRequired(ctx context.Context, version string, promise, requiredPromise *v1alpha1.Promise) {
+	logger := ctrl.LoggerFrom(ctx)
 	requiredBy := v1alpha1.RequiredBy{
 		Promise: v1alpha1.PromiseSummary{
 			Name:    promise.Name,
@@ -1066,6 +1066,6 @@ func (r *PromiseReconciler) markRequiredPromiseAsRequired(ctx context.Context, v
 
 	err := r.Client.Status().Update(ctx, requiredPromise)
 	if err != nil {
-		r.Log.Error(err, "error updating promise required by promise", "promise", promise.GetName(), "required promise", requiredPromise.GetName())
+		logger.Error(err, "error updating promise required by promise", "required promise", requiredPromise.GetName())
 	}
 }
